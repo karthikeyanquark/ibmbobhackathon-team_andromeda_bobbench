@@ -283,6 +283,46 @@ Generate the complete testbench now:
     return prompt
 
 
+def compile_check_testbench(tb_code, module_path, output_dir="/tmp"):
+    """
+    Attempt to compile testbench with iverilog to catch real syntax errors.
+    Returns (success: bool, errors: list)
+    """
+    import tempfile
+    import subprocess
+    from pathlib import Path
+    
+    try:
+        # Create temporary files
+        with tempfile.NamedTemporaryFile(mode='w', suffix='_tb.v', delete=False) as tb_file:
+            tb_file.write(tb_code)
+            tb_path = tb_file.name
+        
+        # Try to compile
+        result = subprocess.run(
+            ['iverilog', '-g2012', '-o', '/dev/null', module_path, tb_path],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        # Clean up
+        Path(tb_path).unlink(missing_ok=True)
+        
+        if result.returncode == 0:
+            return True, []
+        else:
+            # Parse errors
+            error_lines = result.stderr.strip().split('\n')
+            errors = [line for line in error_lines if 'error:' in line.lower()]
+            return False, errors[:5]  # Return first 5 errors
+            
+    except subprocess.TimeoutExpired:
+        return False, ["Compilation timeout"]
+    except Exception as e:
+        return False, [f"Compilation check failed: {str(e)}"]
+
+
 def validate_testbench_syntax(tb_code):
     """Validate testbench for common syntax errors."""
     errors = []

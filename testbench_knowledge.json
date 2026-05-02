@@ -1,0 +1,13 @@
+{
+  "successful_patterns": [
+    {
+      "module_type": "wallace_reduction",
+      "code_snippet": "`timescale 1ns/1ps\n\nmodule tb_wallace_reduction();\n\n    // 1. Signal declarations\n    reg [7:0] p0, p1, p2;\n    wire [7:0] sum, carry;\n\n    // 2. DUT instantiation\n    wallace_reduction dut (\n        .p0(p0),\n        .p1(p1),\n        .p2(p2),\n        .sum(sum),\n        .carry(carry)\n    );\n\n    // 3. Clock generation (if needed)\n    reg clk = 0;\n    always #5 clk = ~clk;\n\n    // 4. Waveform dump\n    initial begin\n        $dumpfile(\"dump.vcd\");\n        $dumpvars(0, tb_wallace_reduction);\n    end\n",
+      "quality_score": 7.0,
+      "timestamp": "2026-05-03T00:57:44.245411"
+    }
+  ],
+  "common_errors": [],
+  "best_practices": [],
+  "module_templates": {}
+}

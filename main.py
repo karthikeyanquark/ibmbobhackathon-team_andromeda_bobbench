@@ -22,7 +22,8 @@ from enhanced_tb_generator import (
     extract_module_info,
     build_enhanced_prompt,
     validate_testbench_syntax,
-    calculate_quality_score
+    calculate_quality_score,
+    compile_check_testbench
 )
 
 console = Console()
@@ -46,6 +47,7 @@ def call_watsonx(prompt, api_key, max_tokens=2500, temperature=0.7, top_p=0.95, 
         )
         if token_response.status_code != 200:
             console.print("[bold red]Error getting IAM token.[/bold red]")
+            console.print(f"[dim]{token_response.text}[/dim]")
             sys.exit(1)
         
         iam_token = token_response.json()["access_token"]
@@ -57,27 +59,53 @@ def call_watsonx(prompt, api_key, max_tokens=2500, temperature=0.7, top_p=0.95, 
             "Authorization": f"Bearer {iam_token}"
         }
 
+        # Use greedy decoding for more reliable results
+        # Sample decoding may not be supported by all models
         payload = {
             "input": prompt,
             "parameters": {
-                "decoding_method": "sample",
+                "decoding_method": "greedy",
                 "max_new_tokens": max_tokens,
-                "temperature": temperature,
-                "top_p": top_p,
-                "top_k": top_k,
-                "repetition_penalty": 1.05,
-                "stop_sequences": ["endmodule\n\n", "```"]
+                "min_new_tokens": 100,
+                "stop_sequences": [],
+                "repetition_penalty": 1.0
             },
             "model_id": "ibm/granite-3-8b-instruct",
             "project_id": os.getenv('WATSONX_PROJECT_ID')
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=90)
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
         response.raise_for_status()
-        return response.json()['results'][0]['generated_text']
+        
+        result = response.json()
+        
+        # Debug: Check response structure
+        if 'results' not in result or len(result['results']) == 0:
+            console.print(f"[red]Unexpected API response structure:[/red]")
+            console.print(f"[dim]{result}[/dim]")
+            return None
+            
+        generated_text = result['results'][0]['generated_text']
+        
+        if not generated_text or len(generated_text) < 50:
+            console.print(f"[yellow]⚠ API returned very short response ({len(generated_text)} chars)[/yellow]")
+            console.print(f"[dim]Response: {generated_text[:100]}[/dim]")
+            return None
+            
+        return generated_text
+        
+    except requests.exceptions.Timeout:
+        console.print(f"[bold red]API Timeout:[/bold red] Request took longer than 120 seconds")
+        return None
+    except requests.exceptions.HTTPError as e:
+        console.print(f"[bold red]HTTP Error:[/bold red] {e}")
+        console.print(f"[dim]{e.response.text if hasattr(e, 'response') else 'No response text'}[/dim]")
+        return None
     except Exception as e:
         console.print(f"[bold red]API Error:[/bold red] {e}")
-        sys.exit(1)
+        import traceback
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        return None
 
 def generate_verification_report(verilog_content, api_key):
     prompt = f"""You are a Principal VLSI Verification Engineer. 
@@ -94,13 +122,14 @@ Verilog Module:
 """
     return call_watsonx(prompt, api_key, 3000).strip()
 
-def generate_enhanced_testbench(verilog_content, api_key, max_attempts=3):
+def generate_enhanced_testbench(verilog_content, api_key, module_path, max_attempts=3):
     """
     Enhanced testbench generation with:
     - Complexity analysis
     - Few-shot learning from successful examples
     - Iterative refinement with syntax validation
     - Quality scoring and learning
+    - Compilation checking
     """
     console.print("\n[cyan]🔍 Analyzing module complexity...[/cyan]")
     
@@ -189,14 +218,28 @@ def generate_enhanced_testbench(verilog_content, api_key, max_attempts=3):
                 for warning in validation['warnings']:
                     console.print(f"  • {warning}")
             
+            # Compilation check with iverilog
+            console.print(f"[cyan]🔧 Checking compilation...[/cyan]")
+            compile_success, compile_errors = compile_check_testbench(code_body, str(module_path))
+            
+            if not compile_success:
+                console.print(f"[red]✗ Compilation failed:[/red]")
+                for error in compile_errors:
+                    console.print(f"  • {error}")
+                # Penalize quality score for compilation failure
+                quality_score = max(0, quality_score - 3.0)
+                console.print(f"[yellow]Adjusted score: {quality_score:.1f}/10[/yellow]")
+            else:
+                console.print(f"[green]✓ Compilation successful[/green]")
+            
             # Keep best version
             if quality_score > best_score:
                 best_code = code_body
                 best_score = quality_score
                 console.print(f"[green]✓ New best score: {best_score:.1f}/10[/green]")
             
-            # If we got a good score, stop early
-            if quality_score >= 8.0 and validation['valid']:
+            # If we got a good score AND compiles, stop early
+            if quality_score >= 8.0 and validation['valid'] and compile_success:
                 console.print(f"[bold green]✓ Excellent quality achieved![/bold green]")
                 break
             
@@ -260,9 +303,69 @@ def main():
     tb_path = output_dir / f"{base_name}_tb.v"
     tb_exists = tb_path.exists()
     
+    # Analyze and validate existing testbench if it exists
+    existing_tb_quality = 0
+    needs_regeneration = False
+    
     if tb_exists:
-        console.print(f"[yellow]ℹ[/yellow] Testbench already exists at [cyan]{tb_path}[/cyan]")
-        console.print("[yellow]→[/yellow] Skipping testbench generation, proceeding with AI verification only")
+        console.print(f"\n[cyan]📋 Existing testbench found at [bold]{tb_path}[/bold][/cyan]")
+        console.print("[cyan]🔍 Analyzing existing testbench quality...[/cyan]")
+        
+        try:
+            with open(tb_path, 'r') as f:
+                existing_tb_code = f.read()
+            
+            # Analyze module for context
+            module_info = extract_module_info(verilog_content)
+            complexity = analyze_module_complexity(verilog_content)
+            
+            # Validate and score existing testbench
+            validation = validate_testbench_syntax(existing_tb_code)
+            existing_tb_quality = calculate_quality_score(existing_tb_code, module_info, complexity)
+            
+            # Display quality report
+            table = Table(title="Existing Testbench Quality Report", show_header=True, header_style="bold magenta")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Status", style="green")
+            table.add_column("Score", style="yellow")
+            
+            table.add_row("Overall Quality",
+                         "✓ Good" if existing_tb_quality >= 7.0 else "⚠ Needs Improvement" if existing_tb_quality >= 5.0 else "✗ Poor",
+                         f"{existing_tb_quality:.1f}/10")
+            table.add_row("Syntax Valid",
+                         "✓ Yes" if validation['valid'] else "✗ No",
+                         f"{len(validation['errors'])} errors")
+            table.add_row("Warnings",
+                         "ℹ" if validation['warnings'] else "✓ None",
+                         f"{len(validation['warnings'])} warnings")
+            
+            console.print(table)
+            
+            if validation['errors']:
+                console.print("\n[yellow]⚠ Syntax Errors Found:[/yellow]")
+                for error in validation['errors'][:5]:  # Show first 5
+                    console.print(f"  • {error}")
+            
+            if validation['warnings']:
+                console.print("\n[yellow]ℹ Warnings:[/yellow]")
+                for warning in validation['warnings'][:3]:  # Show first 3
+                    console.print(f"  • {warning}")
+            
+            # Decide if regeneration is needed
+            QUALITY_THRESHOLD = 7.0
+            
+            if existing_tb_quality < QUALITY_THRESHOLD or not validation['valid']:
+                needs_regeneration = True
+                console.print(f"\n[yellow]⚠ Quality score {existing_tb_quality:.1f}/10 is below threshold {QUALITY_THRESHOLD}[/yellow]")
+                console.print("[cyan]→ Will regenerate optimized testbench[/cyan]")
+            else:
+                console.print(f"\n[green]✓ Existing testbench quality is good ({existing_tb_quality:.1f}/10)[/green]")
+                console.print("[green]→ Keeping existing testbench[/green]")
+                
+        except Exception as e:
+            console.print(f"[red]✗ Error analyzing existing testbench: {e}[/red]")
+            console.print("[yellow]→ Will regenerate testbench[/yellow]")
+            needs_regeneration = True
         
     with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console) as progress:
         task1 = progress.add_task("[cyan]Step 1: AI Static Analysis...", total=None)
@@ -270,19 +373,55 @@ def main():
         progress.update(task1, completed=True)
     
     tb_code = None
-    if not tb_exists:
-        console.print("\n[bold cyan]═══ Step 2: Enhanced Testbench Generation ═══[/bold cyan]")
-        tb_code = generate_enhanced_testbench(verilog_content, api_key, max_attempts=3)
+    backup_path = None
+    
+    # Generate or regenerate testbench based on analysis
+    if not tb_exists or needs_regeneration:
+        if needs_regeneration:
+            console.print("\n[bold cyan]═══ Step 2: Regenerating Optimized Testbench ═══[/bold cyan]")
+            console.print(f"[yellow]Previous quality: {existing_tb_quality:.1f}/10 → Target: ≥7.0/10[/yellow]")
+            # Backup old testbench
+            backup_path = output_dir / f"{base_name}_tb.v.backup"
+            shutil.copy(tb_path, backup_path)
+            console.print(f"[dim]Backup saved to {backup_path}[/dim]")
+        else:
+            console.print("\n[bold cyan]═══ Step 2: Enhanced Testbench Generation ═══[/bold cyan]")
+        
+        tb_code = generate_enhanced_testbench(verilog_content, api_key, file_path, max_attempts=3)
         
         if not tb_code:
             console.print("[bold red]✗ Testbench generation failed[/bold red]")
+            if needs_regeneration and backup_path:
+                console.print("[yellow]→ Restoring backup testbench[/yellow]")
+                shutil.copy(backup_path, tb_path)
             sys.exit(1)
+        
+        # Compare quality if regenerating
+        if needs_regeneration:
+            module_info = extract_module_info(verilog_content)
+            complexity = analyze_module_complexity(verilog_content)
+            new_quality = calculate_quality_score(tb_code, module_info, complexity)
+            
+            console.print(f"\n[cyan]📊 Quality Comparison:[/cyan]")
+            console.print(f"  Old: {existing_tb_quality:.1f}/10")
+            console.print(f"  New: {new_quality:.1f}/10")
+            console.print(f"  Improvement: {'+' if new_quality > existing_tb_quality else ''}{new_quality - existing_tb_quality:.1f}")
+            
+            if new_quality > existing_tb_quality:
+                console.print("[green]✓ New testbench is better, updating...[/green]")
+            else:
+                console.print("[yellow]⚠ New testbench not significantly better[/yellow]")
+                # Still use new one if it meets threshold
+                if new_quality >= 7.0:
+                    console.print("[green]→ But meets quality threshold, using new version[/green]")
+                else:
+                    console.print("[yellow]→ Keeping backup as fallback[/yellow]")
     else:
-        console.print("\n[green]✓[/green] Using existing testbench")
+        console.print("\n[green]✓[/green] Using existing high-quality testbench")
     
     with open(output_dir / f"{base_name}_report.md", 'w') as f: f.write(report_md)
     
-    if not tb_exists and tb_code:
+    if tb_code:
         with open(tb_path, 'w') as f: f.write(tb_code)
         console.print(f"\n[green]✓[/green] Testbench saved to [cyan]{tb_path}[/cyan]")
     
