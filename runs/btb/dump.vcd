@@ -1,0 +1,60 @@
+$date
+	Sat May  2 12:08:43 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module tb_branch_target_buffer $end
+$var wire 32 ! predicted_pc [31:0] $end
+$var wire 1 " predict_taken $end
+$var reg 1 # branch_taken $end
+$var reg 1 $ clk $end
+$var reg 32 % pc_in [31:0] $end
+$var reg 1 & rst_n $end
+$var reg 32 ' target_pc [31:0] $end
+$var reg 1 ( update_en $end
+$var reg 32 ) update_pc [31:0] $end
+$scope module UUT $end
+$var wire 1 # branch_taken $end
+$var wire 1 $ clk $end
+$var wire 32 * pc_in [31:0] $end
+$var wire 1 & rst_n $end
+$var wire 32 + target_pc [31:0] $end
+$var wire 1 ( update_en $end
+$var wire 32 , update_pc [31:0] $end
+$var wire 4 - upd_idx [3:0] $end
+$var wire 4 . idx [3:0] $end
+$var reg 1 " predict_taken $end
+$var reg 32 / predicted_pc [31:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
+#0
+$dumpvars
+b100000000000000000000000001101 /
+b10 .
+b10 -
+b100000000000000000000000001010 ,
+b100000000000000000000000001011 +
+b100000000000000000000000001001 *
+b100000000000000000000000001010 )
+1(
+b100000000000000000000000001011 '
+0&
+b100000000000000000000000001001 %
+0$
+0#
+0"
+b100000000000000000000000001101 !
+$end
+#5000
+1&
+#10000
+1$
+#55000

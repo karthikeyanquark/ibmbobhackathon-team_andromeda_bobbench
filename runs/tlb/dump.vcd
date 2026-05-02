@@ -1,0 +1,56 @@
+$date
+	Sat May  2 13:16:05 2026
+$end
+$version
+	Icarus Verilog
+$end
+$timescale
+	1ps
+$end
+$scope module tb_tlb_4way $end
+$var wire 20 ! ppn_out [19:0] $end
+$var wire 1 " hit $end
+$var reg 1 # clk $end
+$var reg 1 $ local_clk $end
+$var reg 20 % vpn_in [19:0] $end
+$scope module dut $end
+$var wire 1 $ clk $end
+$var wire 20 & vpn_in [19:0] $end
+$var reg 1 " hit $end
+$var reg 20 ' ppn_out [19:0] $end
+$var integer 32 ( i [31:0] $end
+$upscope $end
+$upscope $end
+$enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
+#0
+$dumpvars
+b100 (
+b0 '
+b0 &
+b0 %
+x$
+0#
+0"
+b0 !
+$end
+#20000
+b100 (
+b11011011111011101111 %
+b11011011111011101111 &
+1#
+#40000
+b100 (
+b11101111101011001110 %
+b11101111101011001110 &
+#60000
+b100 (
+b11101011101010111110 %
+b11101011101010111110 &
+#80000
+b100 (
+b11101101111011101010 %
+b11101101111011101010 &
+#100000
