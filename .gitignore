@@ -1,2 +1,13 @@
-.env
+# --- Python Stuff ---
 venv/
+__pycache__/
+*.pyc
+
+# --- Security (CRITICAL) ---
+.env
+
+# --- Simulation & Log Files ---
+runs/
+*.vvp
+*.vcd
+files.f
